@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 class PullRequestAnalyzer:
     def __init__(self):
@@ -145,30 +146,34 @@ class PullRequestAnalyzer:
                 break
 
     def process_pull_requests(self):
-        '''Processes pull requests and checks for the target file'''
-        for pr in self.fetch_pull_requests():
-            # Only process PRs that fall within specified date range
-            if self.date_filtering:
-                pr_created_at = datetime.strptime(pr['created_at'], '%Y-%m-%dT%H:%M:%SZ')
-                if pr_created_at > self.END_DATE:
-                    continue
-                elif pr_created_at < self.START_DATE:
-                    # Since pull requests are sorted by creation date descending,
-                    # we can stop processing further pull requests
-                    print('Reached pull requests outside the date range. Stopping.')
-                    break
+        '''Processes pull requests and checks for the target file asynchronously'''
+        file_request_futures=[]
+        with ThreadPoolExecutor() as executor:
+            for pr in self.fetch_pull_requests():
+                # Only process PRs that fall within specified date range
+                if self.date_filtering:
+                    pr_created_at = datetime.strptime(pr['created_at'], '%Y-%m-%dT%H:%M:%SZ')
+                    if pr_created_at > self.END_DATE:
+                        continue
+                    elif pr_created_at < self.START_DATE:
+                        # Since pull requests are sorted by creation date descending,
+                        # we can stop processing further pull requests
+                        print('Reached pull requests outside the date range. Stopping.')
+                        break
 
-            pull_number = pr['number']
-            pull_url = pr['html_url']
-            self.pull_requests_searched += 1
-            print(f'Processing PR #{pull_number}')        
+                pull_number = pr['number']
+                pull_url = pr['html_url']
+                self.pull_requests_searched += 1
+                print(f'Processing PR #{pull_number}')
+                file_request_futures.append(executor.submit(self.read_files, pull_number, pull_url))
 
-            # Fetch PR files and determine if specified file was changed
-            for file in self.fetch_pr_files(pull_number):
-                self.files_searched += 1
-                if file['filename'] == self.target_file:
-                    self.pull_requests_with_file.append(pull_url)
-                    break # No need to check more files in this pull request
+    def read_files(self, pull_number, pull_url):
+        '''Fetch PR files and determine if specified file was changed'''
+        for file in self.fetch_pr_files(pull_number):
+            self.files_searched += 1
+            if file['filename'] == self.target_file:
+                self.pull_requests_with_file.append(pull_url)
+                break # No need to check more files in this pull request
 
     def display_results(self):
         if not self.pull_requests_with_file:
