@@ -2,186 +2,201 @@ import requests
 import configparser
 import os
 import sys
+import time
 from datetime import datetime
 
-def main():
-    # Determine environment that script is executing in and read config file
-    if getattr(sys, 'frozen', False):
-        application_path = os.path.dirname(sys.executable)
-    else:
-        application_path = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(application_path, 'config.ini')
+class PullRequestAnalyzer:
+    def __init__(self):
+        self.RESULTS_PER_PAGE = 100
+        self.pull_requests_with_file = []
+        self.start_time = time.time()
+        self.pull_requests_searched = 0
+        self.files_searched = 0
 
-    if not os.path.exists(config_path):
-        print(f'Error: Configuration file "config.ini" not found in {application_path}')
-        input('Press Enter to exit...')
-        sys.exit(1)
-
-    config = configparser.ConfigParser()
-    config.read(config_path)
-
-    # Config parameters
-    GITHUB_ENDPOINT = config['GITHUB'].get('API_ROOT_ENDPOINT')
-    OWNER = config['GITHUB'].get('OWNER')
-    REPO = config['GITHUB'].get('REPO')
-    GITHUB_TOKEN = config['AUTHENTICATION'].get('GITHUB_TOKEN')
-    HEADERS = {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': f'Bearer {GITHUB_TOKEN}'
-        }
-    RESULTS_PER_PAGE = 100
-
-    if not GITHUB_TOKEN:
-        print('Error: missing GitHub token in config.ini')
-        input('Press Enter to exit...')
-        sys.exit(1)
-
-    # Get and verify user inputs
-    target_file = input('Enter full path of file to search for in pull requests: ')
-
-    while True:
-        pr_status = input('\nWould you like to search just open pull requests or all pull requests? (open/all): ').strip().lower()
-        if pr_status == 'open' or pr_status == 'all':
-            break
+    def read_config(self):
+        '''Reads and validates the configuration file config.ini'''
+        if getattr(sys, 'frozen', False):
+            application_path = os.path.dirname(sys.executable)
         else:
-            print('Invalid status entered. Specify "open" or "all".')
+            application_path = os.path.dirname(os.path.abspath(__file__))
 
-    date_filtering = False
-    START_DATE = None
-    END_DATE = None
+        config_path = os.path.join(application_path, 'config.ini')
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f'Configuration file "config.ini" not found in {application_path}')
 
-    if pr_status == 'open':
-        print('\nProcessing all open PRs...')
-    else:
+        config = configparser.ConfigParser()
+        config.read(config_path)
+
+        # Extract configuration parameters
+        try:
+            self.GITHUB_ENDPOINT = config['GITHUB'].get('API_ROOT_ENDPOINT')
+            self.OWNER = config['GITHUB'].get('OWNER')
+            self.REPO = config['GITHUB'].get('REPO')
+            self.GITHUB_TOKEN = config['AUTHENTICATION'].get('GITHUB_TOKEN')
+        except KeyError as e:
+            raise KeyError(f'Missing configuration section: {e} in config.ini')
+        
+        if not self.GITHUB_ENDPOINT:
+            raise ValueError('GITHUB_ENDPOINT is missing in config.ini')
+        if not self.OWNER:
+            raise ValueError('OWNER is missing in config.ini')
+        if not self.REPO:
+            raise ValueError('REPO is missing in config.ini')
+        if not self.GITHUB_TOKEN:
+            raise ValueError('GITHUB_TOKEN is missing in config.ini')
+
+        self.HEADERS = {
+            'Accept': 'application/vnd.github+json',
+            'Authorization': f'Bearer {self.GITHUB_TOKEN}'
+            }
+
+    def get_user_inputs(self):
+        '''Prompts the user for inputs and validates them.'''
+        self.target_file = input('Enter full path of file to search for in pull requests: ')
+
         while True:
-            filter_choice = input('\nDo you want to filter by date range? (yes/no): ').strip().lower()
-            if filter_choice == 'yes' or filter_choice == 'no':
+            pr_status = input('\nWould you like to search just open pull requests or all pull requests? (open/all): ').strip().lower()
+            if pr_status == 'open' or pr_status == 'all':
+                self.pr_status = pr_status
                 break
             else:
-                print('Enter "yes" or "no"')
+                print('Invalid status entered. Specify "open" or "all".')
 
-        if filter_choice == 'yes':
-            date_filtering = True
-            date_format = '%m-%d-%y'
+        self.date_filtering = False
+        self.START_DATE = None
+        self.END_DATE = None
+
+        if self.pr_status == 'all':
             while True:
-                start_date_input = input(f'\nEnter the start date (format: "mm-dd-yy"): ').strip()
-                end_date_input = input(f'Enter the end date (format: "mm-dd-yy"): ').strip()
-                try:
-                    START_DATE = datetime.strptime(start_date_input, date_format)
-                    END_DATE = datetime.strptime(end_date_input, date_format)
-
-                    if START_DATE > END_DATE:
-                        print('Start date cannot be after end date. Please enter the dates again.')
-                        continue
-                    print(f'\nProcessing all pull requests opened between {START_DATE} and {END_DATE}...')
+                filter_choice = input('\nDo you want to filter by date range? (yes/no): ').strip().lower()
+                if filter_choice in ['yes', 'no']:
                     break
-                except ValueError as ve:
-                    print(f'Invalid date format: {ve}. Please enter the dates again.')
-        else:
-            print('\nProcessing all PRs with no date filtering...')
+                else:
+                    print('Enter "yes" or "no"')
 
-    # Begin processing PRs
-    pull_requests_with_file = []
-    page = 1
-    while True:
-        # Step 1: Get pull requests
-        pulls_url = f'{GITHUB_ENDPOINT}/repos/{OWNER}/{REPO}/pulls'
-        params = {'state': pr_status, 
-                'per_page': RESULTS_PER_PAGE, 
+            if filter_choice == 'yes':
+                self.date_filtering = True
+                date_format = '%m-%d-%y'
+                while True:
+                    start_date_input = input(f'\nEnter the start date (format: "mm-dd-yy"): ').strip()
+                    end_date_input = input(f'Enter the end date (format: "mm-dd-yy"): ').strip()
+                    try:
+                        self.START_DATE = datetime.strptime(start_date_input, date_format)
+                        self.END_DATE = datetime.strptime(end_date_input, date_format)
+                        if self.START_DATE > self.END_DATE:
+                            print('Start date cannot be after end date. Please enter the dates again.')
+                            continue
+                        print(f'\nProcessing all pull requests opened between {self.START_DATE} and {self.END_DATE}...')
+                        break
+                    except ValueError as ve:
+                        print(f'Invalid date format: {ve}. Please enter the dates again.')
+            else:
+                print('\nProcessing all PRs with no date filtering...')
+        else: print('\nProcessing all open PRs...')
+
+    def fetch_pull_requests(self):
+        '''Generator function to fetch all pull requests with pagination'''
+        page = 1
+        while True:
+            pulls_url = f'{self.GITHUB_ENDPOINT}/repos/{self.OWNER}/{self.REPO}/pulls'
+            params = {
+                'state': self.pr_status, 
+                'per_page': self.RESULTS_PER_PAGE, 
                 'page': page,
                 'sort': 'created',
-                'direction': 'desc'}
+                'direction': 'desc'
+            }
 
-        pulls_response = requests.get(pulls_url, headers=HEADERS, params=params)
+            # Make API request and check for errors
+            response = requests.get(pulls_url, headers=self.HEADERS, params=params, verify=True)
+            if response.status_code != 200:
+                raise Exception(f'Error fetching pull requests: {response.status_code}, {response.text}')
+            
+            pulls = response.json()
+            if not pulls:
+                break  # No more pull requests
+            yield from pulls
 
-        # Check for response errors
-        if pulls_response.status_code != 200:
-            print(f'Error fetching pull requests: {pulls_response.status_code}')
-            print(f'Response Content: {pulls_response.text}')
-            input('Press Enter to exit...')
-            sys.exit(1)
+            if 'next' in response.links:
+                page += 1
+            else:
+                break
 
-        pulls = pulls_response.json()
+    def fetch_pr_files(self, pull_number):
+        '''Generator function to fetch files in pull request with pagination'''
+        page = 1
+        while True:
+            files_url = f'{self.GITHUB_ENDPOINT}/repos/{self.OWNER}/{self.REPO}/pulls/{pull_number}/files'
+            params = {'per_page': self.RESULTS_PER_PAGE, 'page': page}
 
-        if not pulls:
-            break  # No more pull requests
+            # Make API request and check for errors
+            response = requests.get(files_url, headers=self.HEADERS, params=params, verify=True)
+            if response.status_code != 200:
+                raise Exception(f'Error fetching files for PR #{pull_number}: {response.status_code}, {response.text}')    
+                
+            files = response.json()
+            if not files:
+                break  # No more files in this pull request
+            yield from files
 
-        stop_processing = False
+            if 'next' in response.links:
+                page += 1
+            else:
+                break
 
-        for pr in pulls:
+    def process_pull_requests(self):
+        '''Processes pull requests and checks for the target file'''
+        for pr in self.fetch_pull_requests():
             # Only process PRs that fall within specified date range
-            if date_filtering:
+            if self.date_filtering:
                 pr_created_at = datetime.strptime(pr['created_at'], '%Y-%m-%dT%H:%M:%SZ')
-
-                if pr_created_at > END_DATE:
+                if pr_created_at > self.END_DATE:
                     continue
-                elif pr_created_at < START_DATE:
+                elif pr_created_at < self.START_DATE:
                     # Since pull requests are sorted by creation date descending,
                     # we can stop processing further pull requests
                     print('Reached pull requests outside the date range. Stopping.')
-                    stop_processing = True
                     break
 
             pull_number = pr['number']
             pull_url = pr['html_url']
-            files_page = 1
+            self.pull_requests_searched += 1
+            print(f'Processing PR #{pull_number}')        
 
-            while True:
-                # Step 2: Get files changed in the pull request
-                print(f'Processing PR #{pull_number}')
-                files_url = f'{GITHUB_ENDPOINT}/repos/{OWNER}/{REPO}/pulls/{pull_number}/files'
-                files_params = {'per_page': RESULTS_PER_PAGE, 'page': files_page}
-                files_response = requests.get(files_url, headers=HEADERS, params=files_params, verify=True)
+            # Fetch PR files and determine if specified file was changed
+            for file in self.fetch_pr_files(pull_number):
+                self.files_searched += 1
+                if file['filename'] == self.target_file:
+                    self.pull_requests_with_file.append(pull_url)
+                    break # No need to check more files in this pull request
 
-                # Check for HTTP errors
-                if files_response.status_code != 200:
-                    print(f'Error fetching files for PR #{pull_number}: {files_response.status_code}')
-                    print(f'Response Content: {files_response.text}')
-                    input('Press Enter to exit...')
-                    sys.exit(1)
-                
-                files = files_response.json()
-                if not files:
-                    break  # No more files in this pull request  
-
-                # Step 3: Check if the specified file was changed
-                file_found = False
-                for file in files:
-                    if file['filename'] == target_file:
-                        pull_requests_with_file.append(pull_url)
-                        file_found = True  # No need to check more files in this pull request
-                        break
-
-                if file_found:
-                    break  # No need to check more pages of files in this pull request
-                
-                # Continue to the next page of files
-                if 'next' in files_response.links:
-                    files_page += 1
-                else:
-                    break  # No more pages of files
-
-        if stop_processing:
-            break  # break out of the main loop
-
-        # Continue to the next page of pull requests
-        if 'next' in pulls_response.links:
-            page += 1
+    def display_results(self):
+        if not self.pull_requests_with_file:
+            print(f'\nNo pull requests found that modified {self.target_file}')
         else:
-            break  # no more pages of pull requests
-        
-    # Output the list of pull requests found with the specified file changed
-    if not pull_requests_with_file:
-        print('\nNo pull requests found that modified the specified file.')
-    else:
-        print(f'\nPull requests that modified {target_file}:')
-        for pull_url in pull_requests_with_file:
-            print(pull_url)
+            print(f'\nPull requests that modified {self.target_file}:')
+            for pull_url in self.pull_requests_with_file:
+                print(pull_url)
+        print(f'\n\nSearched {analyzer.pull_requests_searched} pull requests and {analyzer.files_searched} files.')
 
+    def run(self):
+        '''Main method to run program'''
+        try:
+            self.read_config()
+            self.get_user_inputs()
+            self.process_pull_requests()
+            self.display_results()
+        except Exception as e:
+            print(f'Error: {e}')
+            input('Press Enter to exit...')
+            sys.exit(1)
 
 if __name__ == '__main__':
     while True:
-        main()
+        analyzer = PullRequestAnalyzer()
+        analyzer.run()
+        end_time = time.time()
+        print(f'\nSearch finished in {end_time - analyzer.start_time:.2f} seconds')
         while True:
             search_again = input('\nWould you like to search again? (yes/no): ').strip().lower()
             if search_again in ['yes', 'no']:
