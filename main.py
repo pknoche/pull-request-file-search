@@ -166,6 +166,14 @@ class PullRequestAnalyzer:
                 self.pull_requests_searched += 1
                 print(f'Processing PR #{pull_number}')
                 file_request_futures.append(executor.submit(self.read_files, pull_number, pull_url))
+            
+            # Display error message for any pull requests we were unable to fetch files for 
+            # and continue processing
+            for future in file_request_futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    print(e)
 
     def read_files(self, pull_number, pull_url):
         '''Fetch PR files and determine if specified file was changed'''
