@@ -196,7 +196,7 @@ if __name__ == '__main__':
         analyzer = PullRequestAnalyzer()
         analyzer.run()
         end_time = time.time()
-        print(f'\nSearch finished in {end_time - analyzer.start_time:.2f} seconds')
+        print(f'\nSearch finished in {end_time - analyzer.start_time:.2f} seconds.')
         while True:
             search_again = input('\nWould you like to search again? (yes/no): ').strip().lower()
             if search_again in ['yes', 'no']:
