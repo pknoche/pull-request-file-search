@@ -9,7 +9,6 @@ class PullRequestAnalyzer:
     def __init__(self):
         self.RESULTS_PER_PAGE = 100
         self.pull_requests_with_file = []
-        self.start_time = time.time()
         self.pull_requests_searched = 0
         self.files_searched = 0
 
@@ -146,6 +145,7 @@ class PullRequestAnalyzer:
 
     def process_pull_requests(self):
         '''Processes pull requests and checks for the target file'''
+        self.start_time = time.time()
         for pr in self.fetch_pull_requests():
             # Only process PRs that fall within specified date range
             if self.date_filtering:
