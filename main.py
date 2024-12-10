@@ -10,7 +10,6 @@ class PullRequestAnalyzer:
     def __init__(self):
         self.RESULTS_PER_PAGE = 100
         self.pull_requests_with_file = []
-        self.start_time = time.time()
         self.pull_requests_searched = 0
         self.files_searched = 0
 
@@ -147,6 +146,7 @@ class PullRequestAnalyzer:
 
     def process_pull_requests(self):
         '''Processes pull requests and checks for the target file asynchronously'''
+        self.start_time = time.time()
         file_request_futures=[]
         with ThreadPoolExecutor() as executor:
             for pr in self.fetch_pull_requests():
@@ -209,7 +209,7 @@ if __name__ == '__main__':
         analyzer = PullRequestAnalyzer()
         analyzer.run()
         end_time = time.time()
-        print(f'\nSearch finished in {end_time - analyzer.start_time:.2f} seconds')
+        print(f'\nSearch finished in {end_time - analyzer.start_time:.2f} seconds.')
         while True:
             search_again = input('\nWould you like to search again? (yes/no): ').strip().lower()
             if search_again in ['yes', 'no']:
